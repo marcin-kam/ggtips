@@ -38,6 +38,7 @@
 #' @param callback Callback function for adding custom content to the tooltips
 #' (see the example app).
 #' @param point.size Point size for calibrating hovering accuracy (optional).
+#' @param tooltip.width width of the tooltip
 #' @param dpi DPI value (optional).
 #' @param width Plot width (in inches; optional).
 #' @param height Plot height (in inches; optional).
@@ -54,10 +55,13 @@ renderWithTooltips <- function(plot,
                                plotScales = NULL,
                                callback = NULL,
                                point.size = 10,
+                               tooltip.width = 220,
                                dpi = 72,
                                width = NA,
                                height = NA,
                                customGrob = NULL,
+                               tolerance = 0.05,
+                               follow = FALSE,
                                ...) {
   if (!requireNamespace("shiny")) {
     stop("renderWithTooltips() requires Shiny")
@@ -81,7 +85,10 @@ renderWithTooltips <- function(plot,
       data = res$data,
       height = height,
       width = width,
-      point.size = point.size
+      tooltip.width = tooltip.width,
+      point.size = point.size,
+      follow = follow,
+      tolerance = tolerance
     )
   }, name = "func", eval.env = parent.frame(), quoted = FALSE)
 
@@ -91,43 +98,106 @@ renderWithTooltips <- function(plot,
   }, shiny::uiOutput, list())
 }
 
+#' Sets css variables for styling tooltip div
+#'
+#' @param tooltip.width numeric; can be a single number or two element vector for min and max values
+#' @details A vector with mixed units can be passed to the function, e.g. \code{c("220px", "80%")}.
+#' In this case the min and max widths will be set by position, i.e. \code{--ggtips-min-width} will
+#' be set to \code{220px} and \code{--ggtips-max-width} will be set to \code{80%}. If units are
+#' the same, e.g. \code{c("220px", "420px")}, numerical parts of the elements are comapred with use
+#' of \code{min} and \code{max} functions. If the input is numeric it will be treated as value
+#' expressed in pixels, e.g. 40 will be treated as 40px.
+#'
+#' @return character;
+tooltipStyle <- function(tooltip.width) {
+  tooltipLenght <- length(tooltip.width)
+
+  if(tooltipLenght == 0 || any(is.na(tooltip.width)) || any(is.null(tooltip.width))) {
+    return()
+  }
+
+  if(is.numeric(tooltip.width)) {
+    stopifnot(all(tooltip.width >= 0))
+    tooltip.width <- paste0(tooltip.width, "px")
+  }
+
+  if (length(tooltip.width) == 1) {
+    val <- gsub(pattern = "([0-9]+)[a-z%]*", x = tooltip.width, replacement = "\\1")
+    stopifnot(val >= 0)
+    minWidth <- maxWidth <- tooltip.width
+  } else {
+    vals <- gsub(pattern = "([0-9]+)[a-z%]*", x = tooltip.width, replacement = "\\1")
+    vals <- as.numeric(vals)
+    stopifnot(all(vals >= 0))
+    units <- gsub(pattern = "[0-9]+([a-z%]*)", x = tooltip.width, replacement = "\\1")
+
+    if(length(unique(units)) == 1) {
+      # values are in the same units, e.g. px or % and can be compared
+      minWidth <- paste0(min(vals), units[1])
+      maxWidth <- paste0(max(vals), units[1])
+    } else {
+      # units are mixed, e.g. px and %; we cannot use min and max, instead take it by position
+      minWidth <- tooltip.width[1]
+      maxWidth <- tooltip.width[2]
+    }
+  }
+
+  paste0("--ggtips-max-width:", maxWidth, "; --ggtips-min-width:", minWidth)
+}
+
 
 #' Render plot with given tooltips data
 #'
 #' @param svg A SVG plot object.
 #' @param data List with tooltip data.
-#' @param point.size Point size for calibrating hovering accuracy (optional).
 #' @param width Plot width (in inches; optional).
 #' @param height Plot height (in inches; optional).
+#' @param point.size Point size for calibrating hovering accuracy (optional).
+#' @param tooltip.width width of the tooltip; may be a numeric or character two-element vector
 #'
 #' @export
 htmlWithGivenTooltips <- function(svg,
                                   data,
                                   height = NA,
                                   width = NA,
-                                  point.size = 10) {
-  if (length(data) == 0) {
-    return(shiny::HTML(svg))
+                                  tooltip.width = "220px",
+                                  follow = FALSE,
+                                  point.size = 10,
+                                  tolerance = 0.05) {
+  ggtips.arg <- if (length(data) == 0) {
+    'unbind'
+  } else {
+    list(
+      data = data,
+      width = width,
+      height = height,
+      size = point.size,
+      follow = follow,
+      tolerance = tolerance
+    )
   }
-  data <- list(
-    data = data,
-    width = width,
-    height = height,
-    size = point.size
-  )
+
   id <- as.numeric(Sys.time())*1000
 
+  ## Timeout is to run code on next render (even loop cycle)
   script <- paste0(
     "<script>",
-    "$('[data-id=\"%s\"]').closest('.shiny-html-output').ggtips(%s);",
+    "setTimeout(function() {",
+      "$('[data-id=\"%s\"]').closest('.shiny-html-output').ggtips(%s);",
+    "}, 0)",
     "</script>"
   )
+
   shiny::tagList(
     shiny::HTML(svg),
     getDependencies(),
-    htmltools::tags$div(`data-id` = id, class = "ggtips-tooltip"),
+    htmltools::tags$div(
+      `data-id` = id,
+      style = tooltipStyle(tooltip.width),
+      class = "ggtips-tooltip"
+    ),
     shiny::HTML(
-      sprintf(script, id, jsonlite::toJSON(data, auto_unbox = TRUE))
+      sprintf(script, id, jsonlite::toJSON(ggtips.arg, auto_unbox = TRUE))
     )
   )
 }
@@ -168,6 +238,7 @@ getSvgAndTooltipdata <- function(plot,
                                  width = NA,
                                  height = NA,
                                  customGrob = NULL,
+                                 addAttributes = FALSE,
                                  ...) {
   outfile <- tempfile(fileext = ".svg")
 
@@ -206,6 +277,7 @@ getSvgAndTooltipdata <- function(plot,
       width = width,
       height = height,
       limitsize = FALSE,
+      addAttributes = addAttributes,
       ...
     )
   }
@@ -246,6 +318,8 @@ plotWithTooltips <- function(plot,
                              width = NA,
                              height = NA,
                              customGrob = NULL,
+                             follow = FALSE,
+                             tolerance = 0.05,
                              ...) {
   res <- ggtips::getSvgAndTooltipdata(
     plot = plot,
@@ -264,6 +338,8 @@ plotWithTooltips <- function(plot,
     data = res$data,
     height = height,
     width = width,
-    point.size = point.size
+    point.size = point.size,
+    follow = follow,
+    tolerance = tolerance
   )
 }

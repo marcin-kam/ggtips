@@ -2,7 +2,7 @@
 
 # ggtips - interactive tooltips for ggplots
 
-[![Build Status](https://travis-ci.org/Roche/ggtips.svg?branch=master)](https://travis-ci.org/Roche/ggtips)
+![Build Status](https://github.com/Roche/ggtips/actions/workflows/main.yml/badge.svg)
 
 R package that provides a set of functions to enhance your ggplots with
 eye-pleasing tooltips easily, and render them in your Shiny apps.
@@ -125,13 +125,19 @@ about configuring Docker and
 [Docker Machine Documentation](https://docs.docker.com/machine/get-started/)
 to learn about *docker-machine* itself.
 
-## Contributors
-<!-- CONTRIBUTORS-START -->
+## Acknowledge
+* The library uses [jQuery.resize](https://github.com/jcubic/jquery.resize) by [Jakub T. Jankiewicz](https://github.com/jcubic).
+* Logo designed by [Jakub T. Jankiewicz](https://github.com/jcubic).
+
+## Maintainers
 * [Paweł Piątkowski](https://github.com/cosi1)
 * [Jakub T. Jankiewicz](https://github.com/jcubic)
+
+## Other Contributors
+<!-- CONTRIBUTORS-START -->
 * [Marcin Kamianowski](https://github.com/marcin-kam)
 * [Michał Jakubczak](https://github.com/mjakubczak)
 * [Ewa Ostrowiecka](https://github.com/ewaostrowiecka)
-* Michal Bartczak
 * [Adam Golubowski](https://github.com/adamgolubowski)
+* [Jakub Malecki](https://github.com/OliBravo)
 <!-- CONTRIBUTORS-END -->

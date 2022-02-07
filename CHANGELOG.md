@@ -1,8 +1,75 @@
+## 0.8.3
+### Bugs
+* fix issue on bar plot with horizontal rectangle occupy whole width and the tooltip wa cut off (by left edge)
+
+## 0.8.2
+### Bugs
+* fix broken resize shiny event (used by execOnResize on renderPlot)
+
+## 0.8.1
+### Bugs
+* fix random tooltip rendering issue (when SVG was not yet properly rendered)
+
+## 0.8.0
+### Features
+* Implementation of tooltips for bar plots
+
+## 0.7.1
+### Bugs
+* Handle case when there are no valid points for geom coordinates
+
+## 0.7.0
+### Features
+* add support for bar plots
+
+## 0.6.1
+### Bugs
+* fix tooltips for confidence interval boxes
+
+## 0.6.0
+### Features
+* parametrize tooltip distance tolerance value
+
+## 0.5.1
+### Bugs
+* fix issue when plot changes the size
+
+## 0.5.0
+### Features
+* allow to set min and max width of the tooltips
+### Bugs
+* fix missing tooltips on some black & white points (created from shapes)
+
+## 0.4.3
+### Bugs
+* fix handlig errors when SVG plot is replaced
+* fix adding proximity event
+
+## 0.4.2
+### Bugs
+* fix shrinking tooltips
+* fix issue on Safari
+
+## 0.4.1
+### Bugs
+* cleanup the events after rendering ggtips without tooltips
+* fix points position calculation when you scroll while cursor is on top of the plot
+
+## 0.4.0
+### Features
+* Performance improvements
+### Bugs
+* Add addAttributes parameter to getSvgAndTooltipdata to fix unused argument errors
+* Fix the ordering of plot data for some trellises
+* Optimize the workflow
+* Bump up minimal required versions of R and ggplot2
+
 ## 0.3.5
 ### Features
 * Allow to set transparent plots
 ### Bugs
-* fix error when tooltip function return empty list
+* Fix error when tooltip function return empty list
+* Workaround for unfilled shapes
 
 ## 0.3.4
 ### Features

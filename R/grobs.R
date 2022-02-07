@@ -83,7 +83,10 @@ getGeomsFromGrob <- function(g) {
 filterGeoms <- function(geomList, classes) {
   Filter(
     function(elem) {
-      any(classes %in% class(elem)) && !grepl("^panel.border", elem$name)
+      any(classes %in% class(elem) &
+            # avoid catching elements like 'rect[panel.border.rect]', only actual geometries should
+            # be considered as valid objects
+            grepl(pattern = "geom_", x = elem$name))
     },
     geomList
   )
@@ -351,20 +354,36 @@ getGeomCoordsForGrob <- function(gtree,
   } else {
     #FIXME Currently only one grob of a given geometry is supported
     geomGrob <- geoms[[1]]
-    
-    if (all(c("x", "y") %in% names(geomGrob))) {
-      getGeomCoordsForSingleGrob(geomGrob, gtree, layoutName, colWidths, rowHeights, unit)
-    } else {
-      lapply(
-        X = geomGrob$children,
-        FUN = getGeomCoordsForSingleGrob,
-        gtree, 
-        layoutName,
-        colWidths,
-        rowHeights,
-        unit
-      )
+
+    xVal <- as.numeric(geomGrob$x)
+    yVal <- as.numeric(geomGrob$y)
+    validX <- which(xVal >= 0 & xVal <= 1)
+    validY <- which(yVal >= 0 & yVal <= 1)
+    validPoints <- intersect(validX, validY)
+
+    if (length(validPoints) == 0) {
+      return(NULL)
     }
+
+    geomGrob$x <- geomGrob$x[validPoints]
+    geomGrob$y <- geomGrob$y[validPoints]
+
+    data.frame(
+      x = getAbsoluteX(
+        gtree,
+        element = geomGrob,
+        layoutName = layoutName,
+        colWidths = colWidths,
+        unit = unit
+      ),
+      y = getAbsoluteY(
+        gtree,
+        element = geomGrob,
+        layoutName = layoutName,
+        rowHeights = rowHeights,
+        unit = unit
+      )
+    )
   }
 }
 

@@ -57,11 +57,11 @@ getLayerAesthetics <- function(plot) {
     } else {
       ggplot2::aes()
     }
-    
+
     if (length(layer$mapping) > 0) {
       layerMapping[names(layer$mapping)] <- layer$mapping
     }
-    
+
     lapply(layerMapping, parseMapping)
   })
 }
@@ -79,9 +79,9 @@ getLayerGeom <- function(layer) {
     #TODO complete the list
     # GeomLine = "polyline",
     # GeomPath = "polyline",
+    GeomPoint = "points",
     GeomBar = "rect",
-    GeomRect = "gTree",
-    GeomPoint = "points"
+    GeomCol = "rect"
   )
   classes <- class(layer$geom)
   unique(unlist(geomDict[classes]))[1]
@@ -89,7 +89,12 @@ getLayerGeom <- function(layer) {
 
 #' Unmap factors
 #'
-unmapFactors <- function(df, origin) {
+unmapFactors <- function(df, origin, plot, layerData) {
+  isBarLayer <- any(c("GeomBar", "GeomRect", "GeomCol") %in% class(layerData$geom))
+
+  if (isBarLayer) return(unmapFactorsBarLayer(df, origin, plot, layerData))
+
+
   # Order factor levels in the original data frame
   origin <- freezeFactorLevels(origin)
   # Include only matching rows
@@ -116,59 +121,125 @@ unmapFactors <- function(df, origin) {
   df
 }
 
+unmapFactorsBarLayer <- function(df, origin, plot, layerData) {
+  q <- ggplot2::ggplot_build(plot)
+  mapping <- q[["plot"]][["mapping"]]
+  explicite_mapping <- sapply(mapping, function(i) {
+    if ("formula" %in% class(i)) {
+      labels(terms(i))
+    } else {
+      i
+    }
+  })
+  factors <- Filter(
+    function(name) { is.factor(origin[[name]]) },
+    names(origin)
+  )
+  for (f in factors) {
+    if (f %in% names(df)) {
+      # find mapping
+      map_found <- names(explicite_mapping)[which(explicite_mapping == f)]
+      new_values <- lapply(map_found, function(map_found) {
+        df_original_names <- unlist(attributes(df)["originalNames"])
+        df_col_idx <- which(df_original_names == map_found)
+        if (map_found %in% c("fill", "colour")) {
+          plot_scales <- q[["plot"]][["scales"]][["scales"]]
+          found_idx <- which(sapply(plot_scales, function(s) any(s$aesthetics == map_found)))
+          plot_scales <- plot_scales[[found_idx]]
+          colors <- plot_scales[["palette.cache"]]
+          values <- plot_scales[["range"]][["range"]]
+
+          if (length(colors) > length(values)) {
+            warning("There are more colors than values to match! Tooltips may be incorrect!")
+          }
+
+          df[[df_col_idx]] <- sapply(df[[df_col_idx]], function(x) {
+            position <- which(colors == x)
+            if (length(position) > 0) {
+              if (!is.null(names(colors))) {
+                return(unique(names(colors)[position]))
+              }
+              return(values[position])
+            }
+            return(NA)
+          })
+        } else if (map_found == "x") {
+          scales_x <- q$layout$panel_scales_x
+          stopifnot(length(scales_x) == 1) # only plots with one x scale are handled at the moment
+
+          cat_levels <- scales_x[[1]][["range"]][["range"]]
+          df[[df_col_idx]] <- cat_levels[round(as.numeric(df[[df_col_idx]]))]
+        }
+        return(list(value = df[[df_col_idx]], column_index = df_col_idx))
+      })
+      cols_to_replace <- sapply(new_values, function(i) i$column_index)
+      df[, cols_to_replace] <- lapply(new_values, function(i) i$value)
+    }
+  }
+  if ("StatIdentity" %in% class(layerData$stat)) {
+    df$count <- df$ymax - df$ymin
+  }
+  df
+}
+
 #' Unmap aesthetics
 #'
 unmapAes <- function(data, mapping, plot) {
   plotLayersData <- getPlotLayerData(plot)
+  layersData <- lapply(plot$layer, function(l) l)
 
-  mapply(
-    function(df, map, plotData) {
+  unmapped <- mapply(
+    function(df, map, plotData, layerData) {
       mapNames <- names(map)
+      originalNames <- names(df)
       names(df) <- sapply(names(df), function(name) {
         if (name %in% mapNames) { map[[name]] } else { name }
       })
-      unmapFactors(df, origin = plotData)
+      # store the original names; they're required in case one variable is mapped to many aestetics
+      attributes(df) <- append(attributes(df), list(originalNames = originalNames))
+      unmapFactors(df, origin = plotData, plot = plot, layerData)
     },
     data,
     mapping,
     plotLayersData,
+    layersData,
     SIMPLIFY = FALSE
   )
+  orderByPanels(unmapped)
+}
+
+#' Order by panels
+#'
+#' Orders each data frame in a list by column \code{PANEL} if it exists.
+#'
+#' @param dfList A list of data frames.
+#'
+#' @return A list of data frames.
+orderByPanels <- function(dfList) {
+  lapply(dfList, function(df) {
+    if (!"PANEL" %in% names(df)) {
+      df
+    } else {
+      df[order(df[["PANEL"]]), ]
+    }
+  })
 }
 
 #' Get plot layer data
-#' 
-#' Returns list of data elements from plot layers. If plot layer data element is 
-#' ggplot2 waiver then plot's data element is used as default. 
-#' 
+#'
+#' Returns list of data elements from plot layers. If plot layer data element is
+#' ggplot2 waiver then plot's data element is used as default.
+#'
 getPlotLayerData <- function(plot) {
   lapply(
-    plot$layers, 
-    function(l) {
-      plotLayerData <- if (is(l$data, "waiver")) {
-        plot$data
-      } else {
-        l$data
-      }
-      # If it's a trellis, order the data frame
-      # based on the actual order of panels
-      if (!is.null(plot$facet$params$facets)) {
-        facet <- plot$facet$params$facets[[1]]
-        trellisVar <- parseMapping(facet)
-        groups <- plotLayerData[[trellisVar]]
-        if (!is.null(groups)) {
-          groupLevels <- levels(groups)
-          plotLayerData <- plotLayerData[order(match(groups, groupLevels)), ]
-        }
-      }
-      plotLayerData
-    }
+    plot$layers,
+    function(l) { if (is(l$data, "waiver")) plot$data else l$data }
   )
 }
 
 #' Remove out of range data
 #'
-#' If plot has data that was filtered when specific geom was added 
+#' If plot has data that was filtered when specific geom was added
 #' it should be filtered out of data.
 #'
 removeOutOfRangeData <- function(data, plot, built) {
@@ -188,7 +259,7 @@ removeOutOfRangeData <- function(data, plot, built) {
       
       d <- d[d[, col] >= min(range[[rangeVar]]) & d[, col] <= max(range[[rangeVar]]), ]
     }
-    
+
     d
   })
 }
@@ -205,19 +276,19 @@ getRanges <- function(plot, built) {
     xRanges <- sapply(built$layout$panel_scales_x, function(scale) {
       ggplot2:::expand_limits_scale(
         scale = scale,
-        expand = ggplot2:::default_expansion(scale), 
-        coord_limits = built$layout$coord$limits$x 
+        expand = ggplot2:::default_expansion(scale),
+        coord_limits = built$layout$coord$limits$x
       )
     })
     yRanges <- sapply(built$layout$panel_scales_y, function(scale) {
       ggplot2:::expand_limits_scale(
         scale = scale,
-        expand = ggplot2:::default_expansion(scale), 
-        coord_limits = built$layout$coord$limits$y 
+        expand = ggplot2:::default_expansion(scale),
+        coord_limits = built$layout$coord$limits$y
       )
     })
   }
-  
+
   list(
     x = c(min(xRanges[1, ]), max(xRanges[2, ])),
     y = c(min(yRanges[1, ]), max(yRanges[2, ]))
@@ -230,14 +301,14 @@ getRanges <- function(plot, built) {
 #' an HTML character string to be appended to the contents.
 #'
 addCustomContents <- function(data, callback) {
-  fun <- if (is.null(callback)) {
-    NULL
+  if (is.null(callback)) {
+    data
   } else {
-    function(x) { c(.custom = callback(x)) }
+    fun <- function(x) { c(.custom = callback(x)) }
+    lapply(data, function(df) {
+      plyr::adply(df, .margins = 1L, .fun = fun)
+    })
   }
-  lapply(data, function(df) {
-    plyr::adply(df, .margins = 1L, .fun = fun)
-  })
 }
 
 #' Use columns defined in variable dictionary
@@ -268,12 +339,12 @@ getNamesFromVarDict <- function(df, varDict, mapping) {
 }
 
 #' As trans
-#' 
-#' Gets a proper trans object from scales package. Original function 
+#'
+#' Gets a proper trans object from scales package. Original function
 #' scales::as.trans() is not working properly when scales are in Imports
-#' 
+#'
 #' @param x character string, the scale name
-#' 
+#'
 #' @return scale object
 as_trans <- function(x){
   trans <- get(paste0(x, "_trans"), asNamespace("scales"))
@@ -340,6 +411,7 @@ roundColumn <- function(column, maxDecimals = 3) {
       round(column, digits = nDigits)
     )
   }
+  column
 }
 
 #' Round values
@@ -348,10 +420,10 @@ roundColumn <- function(column, maxDecimals = 3) {
 roundValues <- function(data) {
   lapply(data, function(df) {
     if (nrow(df) > 0 && "x" %in% names(df)) {
-      df[["x"]] <- roundColumn(df[["x"]])        
+      df[["x"]] <- roundColumn(df[["x"]])
     }
     if (nrow(df) > 0 && "y" %in% names(df)) {
-      df[["y"]] <- roundColumn(df[["y"]]) 
+      df[["y"]] <- roundColumn(df[["y"]])
     }
 
     df
@@ -359,14 +431,14 @@ roundValues <- function(data) {
 }
 
 #' Remove rows with NA for required aes
-#' 
+#'
 removeRowsWithNA <- function(data, layers, originalData) {
   mapply(
     FUN = function(df, layer, origData){
       origData[["row_index"]] <- seq_len(nrow(origData))
       # don't inform twice about data removal (Removed n rows containing missing values (geom_point))
       origData <- suppressWarnings(layer$geom$handle_na(origData, layer$geom_params))
-      
+
       df[origData$row_index, ]
     },
     data,
@@ -388,8 +460,41 @@ getTooltipData <- function(plot, built, varDict, plotScales, callback) {
   data <- unmapAes(data, mapping = mapping, plot = plot)
   data <- addCustomContents(data, callback = callback)
   data <- removeRowsWithNA(data, plot$layers, originalData) # must be executed after addCustomContents
+  validateVarDictKeys(varDict, data)
   lapply(data, getNamesFromVarDict, varDict = varDict, mapping = mapping)
 }
+
+#' Check if all variables specified as keys in varDict are present in plot data
+#' Warning will be displayed if any missing variable is found
+#' 
+validateVarDictKeys <- function(varDict, data) {
+  keys <- names(varDict)
+  dataVars <- sapply(data, names)
+  isMissing <- sapply(
+    keys,
+    isVarMissingInData,
+    data = dataVars
+  )
+  if (any(isMissing)) {
+    missingVars <- paste(keys[which(isMissing)], collapse = ", ")
+    message <- "The following variables are set as keys in varDict but are missing in plot data:"
+    warning(paste(message, missingVars))
+  }
+}
+
+#' Is variable missing in provided data
+#' 
+isVarMissingInData <- function(var, data) {
+  all(
+    sapply(
+      data,
+      function(x) { 
+        !is.element(var, x)
+      }
+    )
+  )
+}
+
 
 #' Convert tooltip data to character strings
 #'
@@ -398,8 +503,7 @@ tooltipDataToText <- function(df, width = 50) {
     text <- if (varName == ".custom") {
       df[[varName]]
     } else {
-      wrapped <- wrap(df[[varName]], width = width)
-      paste(varName, wrapped, sep = ": ")
+      paste(varName, df[[varName]], sep = ": ")
     }
     paste0("<li>", text, "</li>")
   })
